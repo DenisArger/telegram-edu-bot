@@ -31,7 +31,12 @@ async function sendFirstTask(chatId, student) {
       return;
     }
 
-    const tasks = await getTasksForLesson(lessonId);
+    // Get student class for task filtering
+    const studentClass = student.fields["Класс"] || null;
+    // Handle Link field (array) - take first value if array
+    const classValue = Array.isArray(studentClass) ? studentClass[0] : studentClass;
+
+    const tasks = await getTasksForLesson(lessonId, classValue);
 
     if (tasks.length === 0) {
       await bot.sendMessage(

@@ -18,25 +18,55 @@ function shuffleArray(array) {
 /**
  * Get tasks for a specific lesson
  * @param {string} lessonId - Lesson ID
+ * @param {string|number|null} studentClass - Optional student class for filtering tasks
  * @returns {Promise<Array>} Array of task objects in random order
  */
-export async function getTasksForLesson(lessonId) {
+export async function getTasksForLesson(lessonId, studentClass = null) {
   try {
     // Get all active tasks and filter by lesson in code
     // This is more reliable than filtering Link fields in Airtable formula
     const allRecords = await getRecords("Задания", `{Активно} = TRUE()`);
 
-    // Filter tasks that belong to the specified lesson
+    // Filter tasks that belong to the specified lesson and class
     const records = allRecords.filter((record) => {
       const fields = record.fields || {};
       const lessonField = fields["Урок"];
       
-      // Link fields in Airtable are arrays of record IDs
+      // Check if task belongs to the lesson
+      let belongsToLesson = false;
       if (Array.isArray(lessonField)) {
-        return lessonField.includes(lessonId);
+        belongsToLesson = lessonField.includes(lessonId);
+      } else {
+        belongsToLesson = lessonField === lessonId;
       }
-      // Fallback for single value
-      return lessonField === lessonId;
+      
+      if (!belongsToLesson) {
+        return false;
+      }
+      
+      // Filter by class if student class is provided
+      if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+        const taskClass = fields["Класс"];
+        
+        // If task has no class specified, show it to everyone
+        if (taskClass === null || taskClass === undefined || taskClass === "") {
+          return true;
+        }
+        
+        // Normalize class values for comparison (handle numbers: 3, 5, etc.)
+        // Convert to string for consistent comparison
+        const normalizedStudentClass = String(studentClass).trim();
+        
+        // If task has class, show only to students of that class
+        // Support both single value and array (Link field)
+        if (Array.isArray(taskClass)) {
+          return taskClass.some(tc => String(tc).trim() === normalizedStudentClass);
+        }
+        return String(taskClass).trim() === normalizedStudentClass;
+      }
+      
+      // If no student class provided, return all tasks for the lesson
+      return true;
     });
 
     const tasks = records.map((record) => {
