@@ -2,9 +2,23 @@
 import { getRecords } from "./airtable.js";
 
 /**
+ * Shuffle array using Fisher-Yates algorithm
+ * @param {Array} array - Array to shuffle
+ * @returns {Array} Shuffled array
+ */
+function shuffleArray(array) {
+  const shuffled = [...array];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled;
+}
+
+/**
  * Get tasks for a specific lesson
  * @param {string} lessonId - Lesson ID
- * @returns {Promise<Array>} Array of task objects
+ * @returns {Promise<Array>} Array of task objects in random order
  */
 export async function getTasksForLesson(lessonId) {
   try {
@@ -25,26 +39,27 @@ export async function getTasksForLesson(lessonId) {
       return lessonField === lessonId;
     });
 
-    return records
-      .map((record) => {
-        const fields = record.fields || {};
-        const answersText = fields["Правильные ответы"] || "";
-        const order = fields["order"] || fields["Порядок"] || 0;
+    const tasks = records.map((record) => {
+      const fields = record.fields || {};
+      const answersText = fields["Правильные ответы"] || "";
+      const order = fields["order"] || fields["Порядок"] || 0;
 
-        return {
-          id: record.id,
-          text: fields["Текст задания"] || "",
-          answers: answersText
-            .split("\n")
-            .map((a) => a.trim().toLowerCase())
-            .filter((a) => a.length > 0),
-          correctFeedback: fields["Комментарий (верно)"] || "Правильно! ✅",
-          wrongFeedback:
-            fields["Комментарий (ошибка)"] || "Неправильно. Попробуйте еще раз.",
-          order: Number(order),
-        };
-      })
-      .sort((a, b) => a.order - b.order);
+      return {
+        id: record.id,
+        text: fields["Текст задания"] || "",
+        answers: answersText
+          .split("\n")
+          .map((a) => a.trim().toLowerCase())
+          .filter((a) => a.length > 0),
+        correctFeedback: fields["Комментарий (верно)"] || "Правильно! ✅",
+        wrongFeedback:
+          fields["Комментарий (ошибка)"] || "Неправильно. Попробуйте еще раз.",
+        order: Number(order),
+      };
+    });
+
+    // Return tasks in random order
+    return shuffleArray(tasks);
   } catch (error) {
     console.error(`Error getting tasks for lesson ${lessonId}:`, error);
     throw error;
