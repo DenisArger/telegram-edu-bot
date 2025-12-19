@@ -1,0 +1,24 @@
+{
+  "name": "telegram-rus-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for Russian language lessons with Airtable integration",
+  "type": "module",
+  "main": "src/bot.js",
+  "scripts": {
+    "start": "node src/bot.js",
+    "dev": "node src/bot.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "airtable",
+    "education"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "airtable": "^0.12.2",
+    "dotenv": "^17.2.3",
+    "node-telegram-bot-api": "^0.64.0"
+  }
+}
