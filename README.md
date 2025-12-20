@@ -29,6 +29,7 @@ yarn start
 
 Вся подробная документация находится в каталоге [`.memory-bank`](.memory-bank/):
 
+- **[teacher-guide.md](.memory-bank/teacher-guide.md)** ⭐ - **Руководство для учителя**: как создавать задания в Airtable
 - **[project-overview.md](.memory-bank/project-overview.md)** - Общий обзор проекта, возможности, технологический стек
 - **[architecture.md](.memory-bank/architecture.md)** - Архитектура проекта, модульная структура, потоки данных
 - **[code-structure.md](.memory-bank/code-structure.md)** - Детальная структура кода, описание функций
