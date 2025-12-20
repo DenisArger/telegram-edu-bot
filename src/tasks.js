@@ -16,6 +16,73 @@ function shuffleArray(array) {
 }
 
 /**
+ * Build a map of lesson -> topic -> class for efficient lookup
+ * @returns {Promise<Map<string, string>>} Map of lessonId -> class
+ */
+async function buildLessonClassMap() {
+  try {
+    // Get all lessons with their topics
+    const lessons = await getRecords("Уроки");
+    
+    // Get all topics with their classes
+    const topics = await getRecords("Темы");
+    
+    // Build topic -> class map
+    const topicClassMap = new Map();
+    topics.forEach((topic) => {
+      const fields = topic.fields || {};
+      const topicClass = fields["Класс"];
+      
+      // Normalize class value (handle Single select)
+      let normalizedClass = null;
+      if (topicClass !== null && topicClass !== undefined && topicClass !== "") {
+        if (typeof topicClass === 'object' && topicClass.name !== undefined) {
+          normalizedClass = String(topicClass.name).trim();
+        } else {
+          normalizedClass = String(topicClass).trim();
+        }
+        if (normalizedClass === "") {
+          normalizedClass = null;
+        }
+      }
+      
+      topicClassMap.set(topic.id, normalizedClass);
+    });
+    
+    // Build lesson -> class map
+    const lessonClassMap = new Map();
+    lessons.forEach((lesson) => {
+      const fields = lesson.fields || {};
+      const topicField = fields["Тема"];
+      
+      // Get topic ID(s) from lesson
+      let topicIds = [];
+      if (Array.isArray(topicField)) {
+        topicIds = topicField;
+      } else if (topicField) {
+        topicIds = [topicField];
+      }
+      
+      // Get class from first topic (if lesson has multiple topics, use first one)
+      if (topicIds.length > 0) {
+        const topicId = topicIds[0];
+        const topicClass = topicClassMap.get(topicId);
+        lessonClassMap.set(lesson.id, topicClass);
+      } else {
+        // Lesson has no topic, so no class
+        lessonClassMap.set(lesson.id, null);
+      }
+    });
+    
+    return lessonClassMap;
+  } catch (error) {
+    console.error("Error building lesson-class map:", error);
+    // Return empty map on error
+    return new Map();
+  }
+}
+
+/**
  * Get tasks for a specific lesson
  * @param {string} lessonId - Lesson ID
  * @param {string|number|null} studentClass - Optional student class for filtering tasks
@@ -23,96 +90,109 @@ function shuffleArray(array) {
  */
 export async function getTasksForLesson(lessonId, studentClass = null) {
   try {
-    console.log(`[DEBUG] getTasksForLesson called: lessonId="${lessonId}", studentClass="${studentClass}" (type: ${typeof studentClass})`);
+    // Build lesson -> class map for efficient lookup
+    const lessonClassMap = await buildLessonClassMap();
     
     // Get all active tasks and filter by lesson in code
     // This is more reliable than filtering Link fields in Airtable formula
     const allRecords = await getRecords("Задания", `{Активно} = TRUE()`);
-    console.log(`[DEBUG] Total active tasks: ${allRecords.length}`);
 
     // Filter tasks that belong to the specified lesson and class
-    let lessonMatchCount = 0;
-    let classMatchCount = 0;
-    
     const records = allRecords.filter((record) => {
       const fields = record.fields || {};
       const lessonField = fields["Урок"];
-      const taskText = fields["Текст задания"] || "No text";
       
       // Check if task belongs to the lesson
       let belongsToLesson = false;
+      let taskLessonId = null;
+      
       if (Array.isArray(lessonField)) {
         belongsToLesson = lessonField.includes(lessonId);
+        taskLessonId = lessonField.find(lid => lid === lessonId) || (lessonField.length > 0 ? lessonField[0] : null);
       } else {
         belongsToLesson = lessonField === lessonId;
+        taskLessonId = lessonField;
       }
       
       if (!belongsToLesson) {
-        console.log(`[DEBUG] Task ${record.id.substring(0, 8)}...: lesson mismatch - task lesson: ${JSON.stringify(lessonField)}, required: ${lessonId}`);
         return false;
       }
       
-      lessonMatchCount++;
+      // Get class from lesson (via topic)
+      // Class is stored in Topic, not in Task
+      // Get class for the task's lesson from the map
+      const taskClass = taskLessonId ? lessonClassMap.get(taskLessonId) : null;
       
-      // Filter by class
-      const taskClass = fields["Класс"];
+      // Helper function to normalize class value
+      // Handles: numbers, strings, Single select (string or object with name property), arrays
+      const normalizeClassValue = (value) => {
+        if (value === null || value === undefined || value === "") {
+          return null;
+        }
+        
+        // Handle arrays (Link fields or multiple select)
+        if (Array.isArray(value)) {
+          return value
+            .map(tc => {
+              if (tc === null || tc === undefined || tc === "") {
+                return null;
+              }
+              // Handle Single select object {name: "3"}
+              if (typeof tc === 'object' && tc.name !== undefined) {
+                return String(tc.name).trim();
+              }
+              // Convert to string and trim
+              return String(tc).trim();
+            })
+            .filter(v => v !== null && v !== "");
+        }
+        
+        // Handle Single select object {name: "3"}
+        if (typeof value === 'object' && value.name !== undefined) {
+          const normalized = String(value.name).trim();
+          return normalized !== "" ? normalized : null;
+        }
+        
+        // Handle primitive values (number, string)
+        const normalized = String(value).trim();
+        return normalized !== "" ? normalized : null;
+      };
+      
+      // Normalize student class
+      const normalizedStudentClass = normalizeClassValue(studentClass);
       
       // If student has a class, filter tasks
-      if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
-        const normalizedStudentClass = String(studentClass).trim();
+      if (normalizedStudentClass !== null) {
+        // Normalize task class
+        const normalizedTaskClass = normalizeClassValue(taskClass);
         
         // If task has no class specified, show it to everyone
-        if (taskClass === null || taskClass === undefined || taskClass === "") {
-          console.log(`[DEBUG] Task ${record.id.substring(0, 8)}...: no class, showing to student class "${normalizedStudentClass}"`);
-          classMatchCount++;
+        if (normalizedTaskClass === null || (Array.isArray(normalizedTaskClass) && normalizedTaskClass.length === 0)) {
           return true;
         }
         
-        // Normalize task class value(s) for comparison
-        // Handle both numbers (3, 5) and strings ("3", "5")
-        let normalizedTaskClass = null;
-        if (Array.isArray(taskClass)) {
-          // Handle Link field (array) - normalize each value
-          normalizedTaskClass = taskClass.map(tc => {
-            // Convert to string and trim, handle both numbers and strings
-            const val = tc !== null && tc !== undefined ? String(tc).trim() : "";
-            return val;
-          }).filter(v => v !== "");
-        } else {
-          // Convert to string and trim
-          normalizedTaskClass = taskClass !== null && taskClass !== undefined ? String(taskClass).trim() : "";
-        }
-        
-        // Check if classes match (case-insensitive, handle empty strings)
+        // Check if classes match
         let matches = false;
         if (Array.isArray(normalizedTaskClass)) {
+          // Task has multiple classes (Link field) - check if student's class matches any
           matches = normalizedTaskClass.some(tc => tc === normalizedStudentClass);
         } else {
+          // Task has single class - direct comparison
           matches = normalizedTaskClass === normalizedStudentClass;
         }
         
-        console.log(`[DEBUG] Task ${record.id.substring(0, 8)}...: studentClass="${normalizedStudentClass}", taskClass="${JSON.stringify(normalizedTaskClass)}" (raw: ${JSON.stringify(taskClass)}, type: ${typeof taskClass}), matches=${matches}, text: "${taskText.substring(0, 50)}..."`);
-        
-        if (matches) {
-          classMatchCount++;
-        }
         return matches;
       } else {
         // If student has no class, show only tasks without class specified
         // (don't show class-specific tasks to students without class)
-        if (taskClass === null || taskClass === undefined || taskClass === "") {
-          console.log(`[DEBUG] Task ${record.id.substring(0, 8)}...: no class, showing to student without class`);
-          classMatchCount++;
+        const normalizedTaskClass = normalizeClassValue(taskClass);
+        
+        if (normalizedTaskClass === null || (Array.isArray(normalizedTaskClass) && normalizedTaskClass.length === 0)) {
           return true;
         }
-        console.log(`[DEBUG] Task ${record.id.substring(0, 8)}...: has class "${JSON.stringify(taskClass)}", hiding from student without class`);
         return false;
       }
     });
-    
-    console.log(`[DEBUG] Filtering summary: ${lessonMatchCount} tasks match lesson, ${classMatchCount} tasks match class filter`);
-    
-    console.log(`[DEBUG] Filtered tasks for lesson "${lessonId}" and class "${studentClass}": ${records.length} tasks`);
 
     const tasks = records.map((record) => {
       const fields = record.fields || {};

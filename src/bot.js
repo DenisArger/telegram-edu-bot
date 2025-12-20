@@ -32,27 +32,26 @@ async function sendFirstTask(chatId, student) {
     }
 
     // Get student class for task filtering
+    // Single select field can return string or object {name: "value"}
     const studentClass = student.fields["Класс"] || null;
-    console.log(`[DEBUG] Raw student class field for ${chatId}:`, JSON.stringify(studentClass), `(type: ${typeof studentClass})`);
     
     // Handle Link field (array) - take first value if array
     let classValue = Array.isArray(studentClass) ? studentClass[0] : studentClass;
-    console.log(`[DEBUG] After array handling:`, JSON.stringify(classValue), `(type: ${typeof classValue})`);
     
-    // Normalize class value - convert to string and trim
+    // Normalize class value - handle Single select object {name: "value"} or primitive
     if (classValue !== null && classValue !== undefined && classValue !== "") {
-      classValue = String(classValue).trim();
+      // Handle Single select object {name: "3"}
+      if (typeof classValue === 'object' && classValue.name !== undefined) {
+        classValue = String(classValue.name).trim();
+      } else {
+        // Handle primitive values (number, string)
+        classValue = String(classValue).trim();
+      }
     } else {
       classValue = null;
     }
-    
-    // Debug logging
-    console.log(`[DEBUG] Final student class for ${chatId}:`, classValue, `(type: ${typeof classValue})`);
-    console.log(`[DEBUG] All student fields:`, Object.keys(student.fields).join(", "));
 
     const tasks = await getTasksForLesson(lessonId, classValue);
-    
-    console.log(`[DEBUG] Retrieved ${tasks.length} tasks for student ${chatId} (class: ${classValue})`);
 
     if (tasks.length === 0) {
       await bot.sendMessage(
@@ -197,8 +196,6 @@ bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
 
-  console.log(`Callback query received: ${data} from ${chatId}`);
-
   try {
     // Registration flow
     if (data.startsWith("register_lesson_")) {
@@ -292,9 +289,22 @@ bot.on("callback_query", async (query) => {
           return;
         }
 
+        // Get student class for filtering
+        const studentClass = student.fields["Класс"] || null;
+        let normalizedStudentClass = null;
+        if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+          if (typeof studentClass === 'object' && studentClass.name !== undefined) {
+            normalizedStudentClass = String(studentClass.name).trim();
+          } else {
+            normalizedStudentClass = String(studentClass).trim();
+          }
+        }
+
         const currentLessonId = student.fields["Текущий урок"]?.[0];
 
-        const lessons = await getAvailableLessons();
+        // Get lessons filtered by student class
+        const lessons = await getAvailableLessons(normalizedStudentClass);
+        
         if (lessons.length === 0) {
           await bot.sendMessage(
             chatId,
@@ -347,7 +357,19 @@ bot.on("callback_query", async (query) => {
           return;
         }
 
-        const lessons = await getAvailableLessons();
+        // Get student class for filtering
+        const studentClass = student.fields["Класс"] || null;
+        let normalizedClass = null;
+        if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+          if (typeof studentClass === 'object' && studentClass.name !== undefined) {
+            normalizedClass = String(studentClass.name).trim();
+          } else {
+            normalizedClass = String(studentClass).trim();
+          }
+        }
+
+        // Get lessons filtered by student class (for validation)
+        const lessons = await getAvailableLessons(normalizedClass);
         const selectedLesson = lessons.find((l) => l.id === lessonId);
 
         if (!selectedLesson) {
@@ -501,7 +523,20 @@ bot.on("callback_query", async (query) => {
       const student = await getStudentByTelegramId(chatId);
       if (student) {
         const lessonId = student.fields["Текущий урок"]?.[0];
-        const lessons = await getAvailableLessons();
+        
+        // Get student class for filtering
+        const studentClass = student.fields["Класс"] || null;
+        let normalizedStudentClass = null;
+        if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+          if (typeof studentClass === 'object' && studentClass.name !== undefined) {
+            normalizedStudentClass = String(studentClass.name).trim();
+          } else {
+            normalizedStudentClass = String(studentClass).trim();
+          }
+        }
+        
+        // Get lessons filtered by student class
+        const lessons = await getAvailableLessons(normalizedStudentClass);
         const currentLesson = lessons.find((l) => l.id === lessonId);
         const allLessons = lessons.map((l) => l.name).join(", ");
 
