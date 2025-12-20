@@ -25,12 +25,9 @@ const registrationState = new Map(); // Stores registration process state
  */
 async function sendFirstTask(chatId, student) {
   try {
-    console.log(`[LOG] sendFirstTask called for chatId: ${chatId}`);
     const lessonId = student.fields["Текущий урок"]?.[0];
-    console.log(`[LOG] Current lesson ID: ${lessonId}`);
 
     if (!lessonId) {
-      console.log(`[LOG] No lesson ID found`);
       await bot.sendMessage(
         chatId,
         "У вас не назначен текущий урок. Обратитесь к учителю."
@@ -58,12 +55,9 @@ async function sendFirstTask(chatId, student) {
       classValue = null;
     }
 
-    console.log(`[LOG] Getting tasks for lesson ${lessonId} with class ${classValue}`);
     const tasks = await getTasksForLesson(lessonId, classValue);
-    console.log(`[LOG] Found ${tasks.length} tasks for lesson`);
 
     if (tasks.length === 0) {
-      console.log(`[LOG] No tasks found for lesson`);
       await bot.sendMessage(
         chatId,
         "Для этого урока пока нет активных заданий."
@@ -77,7 +71,6 @@ async function sendFirstTask(chatId, student) {
       tasks: tasks,
       studentId: student.id,
     });
-    console.log(`[LOG] User state initialized with ${tasks.length} tasks`);
 
     // Send first task with navigation buttons
     const taskKeyboard = {
@@ -89,14 +82,11 @@ async function sendFirstTask(chatId, student) {
       ],
     };
 
-    console.log(`[LOG] Sending first task: "${tasks[0].text.substring(0, 50)}..."`);
     await bot.sendMessage(chatId, tasks[0].text, {
       reply_markup: taskKeyboard,
     });
-    console.log(`[LOG] First task sent successfully`);
   } catch (error) {
-    console.error(`[LOG] Error sending first task to ${chatId}:`, error);
-    console.error(`[LOG] Error stack:`, error.stack);
+    console.error(`Error sending first task to ${chatId}:`, error);
     await bot.sendMessage(
       chatId,
       "Произошла ошибка при загрузке заданий. Попробуйте позже."
@@ -212,11 +202,6 @@ bot.onText(/\/register/, async (msg) => {
 bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
-
-  console.log(`[LOG] ===== CALLBACK QUERY RECEIVED =====`);
-  console.log(`[LOG] chatId: ${chatId}`);
-  console.log(`[LOG] callback_data: "${data}"`);
-  console.log(`[LOG] message_id: ${query.message.message_id}`);
 
   try {
     // Registration flow - select subject
@@ -361,6 +346,25 @@ bot.on("callback_query", async (query) => {
         const lessons = await getAvailableLessons();
         const selectedLesson = lessons.find((l) => l.id === lessonId);
 
+        if (!selectedLesson) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "Урок не найден",
+            show_alert: true,
+          });
+          return;
+        }
+
+        // Check if there are tasks for this lesson before creating student
+        const tasks = await getTasksForLesson(lessonId);
+        
+        if (tasks.length === 0) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "Для этого урока пока нет активных заданий",
+            show_alert: true,
+          });
+          return;
+        }
+
         // Create student record
         const student = await createStudent(chatId, lessonId);
 
@@ -441,20 +445,16 @@ bot.on("callback_query", async (query) => {
     // Start lesson - show subjects menu
     else if (data === "start_lesson") {
       try {
-        console.log(`[LOG] start_lesson called for chatId: ${chatId}`);
         await bot.answerCallbackQuery(query.id);
 
         const student = await getStudentByTelegramId(chatId);
-        console.log(`[LOG] Student found:`, student ? "yes" : "no");
         if (!student) {
-          console.log(`[LOG] Student not found, sending message`);
           await bot.sendMessage(chatId, "Вы не зарегистрированы.");
           return;
         }
 
         // Get student class for filtering
         const studentClass = student.fields["Класс"] || null;
-        console.log(`[LOG] Student class (raw):`, studentClass);
         let normalizedStudentClass = null;
         if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
           if (typeof studentClass === 'object' && studentClass.name !== undefined) {
@@ -463,16 +463,11 @@ bot.on("callback_query", async (query) => {
             normalizedStudentClass = String(studentClass).trim();
           }
         }
-        console.log(`[LOG] Normalized student class:`, normalizedStudentClass);
 
         // Get available subjects
-        console.log(`[LOG] Calling getAvailableSubjects with class: ${normalizedStudentClass}`);
         const subjects = await getAvailableSubjects(normalizedStudentClass);
-        console.log(`[LOG] getAvailableSubjects returned ${subjects.length} subjects`);
-        console.log(`[LOG] Subjects:`, subjects.map(s => ({ id: s.id, name: s.name })));
 
         if (subjects.length === 0) {
-          console.log(`[LOG] No subjects found, sending message`);
           await bot.sendMessage(
             chatId,
             "К сожалению, пока нет доступных предметов."
@@ -489,10 +484,7 @@ bot.on("callback_query", async (query) => {
             },
           ]),
         };
-        console.log(`[LOG] Created keyboard with ${subjects.length} subjects`);
-        console.log(`[LOG] Keyboard buttons:`, keyboard.inline_keyboard.map(btn => btn[0].text));
 
-        console.log(`[LOG] Sending message with subjects menu`);
         await bot.sendMessage(
           chatId,
           "📚 Выберите предмет:",
@@ -500,10 +492,9 @@ bot.on("callback_query", async (query) => {
             reply_markup: keyboard,
           }
         );
-        console.log(`[LOG] Message sent successfully`);
       } catch (error) {
-        console.error(`[LOG] Error in start_lesson handler for ${chatId}:`, error);
-        console.error(`[LOG] Error stack:`, error.stack);
+        console.error(`Error in start_lesson handler for ${chatId}:`, error);
+        console.error(`Error stack:`, error.stack);
         await bot.answerCallbackQuery(query.id, {
           text: "Произошла ошибка. Попробуйте еще раз.",
           show_alert: true,
@@ -513,7 +504,6 @@ bot.on("callback_query", async (query) => {
     // Start current lesson - begin tasks immediately
     else if (data === "start_current_lesson") {
       try {
-        console.log(`[LOG] start_current_lesson called for chatId: ${chatId}`);
         await bot.answerCallbackQuery(query.id, { text: "Загружаем урок..." });
 
         const student = await getStudentByTelegramId(chatId);
@@ -531,13 +521,32 @@ bot.on("callback_query", async (query) => {
           return;
         }
 
-        console.log(`[LOG] Starting current lesson ${lessonId}`);
+        // Check if there are tasks for this lesson
+        const studentClass = student.fields["Класс"] || null;
+        let normalizedClass = null;
+        if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+          if (typeof studentClass === 'object' && studentClass.name !== undefined) {
+            normalizedClass = String(studentClass.name).trim();
+          } else {
+            normalizedClass = String(studentClass).trim();
+          }
+        }
+
+        const tasks = await getTasksForLesson(lessonId, normalizedClass);
+        
+        if (tasks.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "Для этого урока пока нет активных заданий. Выберите другой урок."
+          );
+          return;
+        }
+
         await bot.sendMessage(chatId, "Начинаем урок ✍️");
         await sendFirstTask(chatId, student);
-        console.log(`[LOG] Current lesson started successfully`);
       } catch (error) {
-        console.error(`[LOG] Error in start_current_lesson handler for ${chatId}:`, error);
-        console.error(`[LOG] Error stack:`, error.stack);
+        console.error(`Error in start_current_lesson handler for ${chatId}:`, error);
+        console.error(`Error stack:`, error.stack);
         await bot.answerCallbackQuery(query.id, {
           text: "Произошла ошибка. Попробуйте еще раз.",
           show_alert: true,
@@ -548,22 +557,18 @@ bot.on("callback_query", async (query) => {
     else if (data.startsWith("select_subject_")) {
       try {
         const subjectId = data.replace("select_subject_", "");
-        console.log(`[LOG] select_subject_ called with subjectId: ${subjectId} for chatId: ${chatId}`);
         
         await bot.answerCallbackQuery(query.id);
 
         const student = await getStudentByTelegramId(chatId);
         if (!student) {
-          console.log(`[LOG] Student not found in select_subject`);
           await bot.sendMessage(chatId, "Вы не зарегистрированы.");
           return;
         }
 
-        console.log(`[LOG] Getting sections for subject ${subjectId}`);
 
         // Get sections for this subject
         const sections = await getSectionsForSubject(subjectId);
-        console.log(`[LOG] Found ${sections.length} sections for subject ${subjectId}`);
 
         if (sections.length === 0) {
           await bot.sendMessage(
@@ -586,9 +591,7 @@ bot.on("callback_query", async (query) => {
         // Get subject name for display
         const subjects = await getAvailableSubjects();
         const selectedSubject = subjects.find((s) => s.id === subjectId);
-        console.log(`[LOG] Selected subject:`, selectedSubject?.name);
 
-        console.log(`[LOG] Sending sections menu with ${sections.length} sections`);
         await bot.sendMessage(
           chatId,
           `📖 Предмет: ${selectedSubject?.name || "Предмет"}\n\nВыберите раздел:`,
@@ -596,10 +599,9 @@ bot.on("callback_query", async (query) => {
             reply_markup: keyboard,
           }
         );
-        console.log(`[LOG] Sections menu sent successfully`);
       } catch (error) {
-        console.error(`[LOG] Error in select_subject handler for ${chatId}:`, error);
-        console.error(`[LOG] Error stack:`, error.stack);
+        console.error(`Error in select_subject handler for ${chatId}:`, error);
+        console.error(`Error stack:`, error.stack);
         await bot.answerCallbackQuery(query.id, {
           text: "Произошла ошибка. Попробуйте еще раз.",
           show_alert: true,
@@ -610,13 +612,11 @@ bot.on("callback_query", async (query) => {
     else if (data.startsWith("select_section_")) {
       try {
         const sectionId = data.replace("select_section_", "");
-        console.log(`[LOG] select_section_ called with sectionId: ${sectionId} for chatId: ${chatId}`);
         
         await bot.answerCallbackQuery(query.id);
 
         const student = await getStudentByTelegramId(chatId);
         if (!student) {
-          console.log(`[LOG] Student not found in select_section`);
           await bot.sendMessage(chatId, "Вы не зарегистрированы.");
           return;
         }
@@ -631,11 +631,9 @@ bot.on("callback_query", async (query) => {
             normalizedStudentClass = String(studentClass).trim();
           }
         }
-        console.log(`[LOG] Getting topics for section ${sectionId} with class: ${normalizedStudentClass}`);
 
         // Get topics for this section
         const topics = await getTopicsForSection(sectionId, normalizedStudentClass);
-        console.log(`[LOG] Found ${topics.length} topics for section ${sectionId}`);
 
         if (topics.length === 0) {
           await bot.sendMessage(
@@ -655,7 +653,6 @@ bot.on("callback_query", async (query) => {
           ]),
         };
 
-        console.log(`[LOG] Sending topics menu with ${topics.length} topics`);
         await bot.sendMessage(
           chatId,
           `📚 Выберите тему:`,
@@ -663,10 +660,9 @@ bot.on("callback_query", async (query) => {
             reply_markup: keyboard,
           }
         );
-        console.log(`[LOG] Topics menu sent successfully`);
       } catch (error) {
-        console.error(`[LOG] Error in select_section handler for ${chatId}:`, error);
-        console.error(`[LOG] Error stack:`, error.stack);
+        console.error(`Error in select_section handler for ${chatId}:`, error);
+        console.error(`Error stack:`, error.stack);
         await bot.answerCallbackQuery(query.id, {
           text: "Произошла ошибка. Попробуйте еще раз.",
           show_alert: true,
@@ -677,13 +673,11 @@ bot.on("callback_query", async (query) => {
     else if (data.startsWith("select_topic_")) {
       try {
         const topicId = data.replace("select_topic_", "");
-        console.log(`[LOG] select_topic_ called with topicId: ${topicId} for chatId: ${chatId}`);
         
         await bot.answerCallbackQuery(query.id);
 
         const student = await getStudentByTelegramId(chatId);
         if (!student) {
-          console.log(`[LOG] Student not found in select_topic`);
           await bot.sendMessage(chatId, "Вы не зарегистрированы.");
           return;
         }
@@ -698,11 +692,9 @@ bot.on("callback_query", async (query) => {
             normalizedStudentClass = String(studentClass).trim();
           }
         }
-        console.log(`[LOG] Getting lessons for topic ${topicId} with class: ${normalizedStudentClass}`);
 
         // Get lessons for this topic
         const lessons = await getLessonsForTopic(topicId, normalizedStudentClass);
-        console.log(`[LOG] Found ${lessons.length} lessons for topic ${topicId}`);
 
         if (lessons.length === 0) {
           await bot.sendMessage(
@@ -722,7 +714,6 @@ bot.on("callback_query", async (query) => {
           ]),
         };
 
-        console.log(`[LOG] Sending lessons menu with ${lessons.length} lessons`);
         await bot.sendMessage(
           chatId,
           `📚 Выберите урок:`,
@@ -730,10 +721,9 @@ bot.on("callback_query", async (query) => {
             reply_markup: keyboard,
           }
         );
-        console.log(`[LOG] Lessons menu sent successfully`);
       } catch (error) {
-        console.error(`[LOG] Error in select_topic handler for ${chatId}:`, error);
-        console.error(`[LOG] Error stack:`, error.stack);
+        console.error(`Error in select_topic handler for ${chatId}:`, error);
+        console.error(`Error stack:`, error.stack);
         await bot.answerCallbackQuery(query.id, {
           text: "Произошла ошибка. Попробуйте еще раз.",
           show_alert: true,
@@ -744,31 +734,48 @@ bot.on("callback_query", async (query) => {
     else if (data.startsWith("select_lesson_")) {
       try {
         const lessonId = data.replace("select_lesson_", "");
-        console.log(`[LOG] select_lesson_ called with lessonId: ${lessonId} for chatId: ${chatId}`);
         
         await bot.answerCallbackQuery(query.id, { text: "Загружаем урок..." });
 
         const student = await getStudentByTelegramId(chatId);
         if (!student) {
-          console.log(`[LOG] Student not found in select_lesson`);
           await bot.sendMessage(chatId, "Вы не зарегистрированы.");
           return;
         }
 
-        console.log(`[LOG] Updating student lesson to: ${lessonId}`);
+        // Get student class for filtering
+        const studentClass = student.fields["Класс"] || null;
+        let normalizedClass = null;
+        if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+          if (typeof studentClass === 'object' && studentClass.name !== undefined) {
+            normalizedClass = String(studentClass.name).trim();
+          } else {
+            normalizedClass = String(studentClass).trim();
+          }
+        }
+
+        // Check if there are tasks for this lesson before updating
+        const tasks = await getTasksForLesson(lessonId, normalizedClass);
+        
+        if (tasks.length === 0) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "Для этого урока пока нет активных заданий",
+            show_alert: true,
+          });
+          return;
+        }
+
         // Update student's current lesson
         await updateStudentLesson(student.id, lessonId);
 
         // Get updated student data
         const updatedStudent = await getStudentByTelegramId(chatId);
-        console.log(`[LOG] Student lesson updated, sending first task`);
 
         await bot.sendMessage(chatId, "Начинаем урок ✍️");
         await sendFirstTask(chatId, updatedStudent);
-        console.log(`[LOG] First task sent successfully`);
       } catch (error) {
-        console.error(`[LOG] Error in select_lesson handler for ${chatId}:`, error);
-        console.error(`[LOG] Error stack:`, error.stack);
+        console.error(`Error in select_lesson handler for ${chatId}:`, error);
+        console.error(`Error stack:`, error.stack);
         await bot.answerCallbackQuery(query.id, {
           text: "Произошла ошибка при загрузке урока. Попробуйте еще раз.",
           show_alert: true,
@@ -778,13 +785,10 @@ bot.on("callback_query", async (query) => {
     // Change lesson - show subjects menu
     else if (data === "change_lesson") {
       try {
-        console.log(`[LOG] change_lesson called for chatId: ${chatId}`);
         await bot.answerCallbackQuery(query.id);
 
         const student = await getStudentByTelegramId(chatId);
-        console.log(`[LOG] Student found:`, student ? "yes" : "no");
         if (!student) {
-          console.log(`[LOG] Student not found, sending message`);
           await bot.sendMessage(
             chatId,
             "Вы не зарегистрированы. Используйте /register для регистрации."
@@ -794,7 +798,6 @@ bot.on("callback_query", async (query) => {
 
         // Get student class for filtering
         const studentClass = student.fields["Класс"] || null;
-        console.log(`[LOG] Student class (raw):`, studentClass);
         let normalizedStudentClass = null;
         if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
           if (typeof studentClass === 'object' && studentClass.name !== undefined) {
@@ -803,16 +806,11 @@ bot.on("callback_query", async (query) => {
             normalizedStudentClass = String(studentClass).trim();
           }
         }
-        console.log(`[LOG] Normalized student class:`, normalizedStudentClass);
 
         // Get available subjects
-        console.log(`[LOG] Calling getAvailableSubjects with class: ${normalizedStudentClass}`);
         const subjects = await getAvailableSubjects(normalizedStudentClass);
-        console.log(`[LOG] getAvailableSubjects returned ${subjects.length} subjects`);
-        console.log(`[LOG] Subjects:`, subjects.map(s => ({ id: s.id, name: s.name })));
 
         if (subjects.length === 0) {
-          console.log(`[LOG] No subjects found, sending message`);
           await bot.sendMessage(
             chatId,
             "К сожалению, пока нет доступных предметов."
@@ -829,10 +827,7 @@ bot.on("callback_query", async (query) => {
             },
           ]),
         };
-        console.log(`[LOG] Created keyboard with ${subjects.length} subjects`);
-        console.log(`[LOG] Keyboard buttons:`, keyboard.inline_keyboard.map(btn => btn[0].text));
 
-        console.log(`[LOG] Sending message with subjects menu for change_lesson`);
         await bot.sendMessage(
           chatId,
           "📚 Выберите предмет для смены урока:",
@@ -840,10 +835,9 @@ bot.on("callback_query", async (query) => {
             reply_markup: keyboard,
           }
         );
-        console.log(`[LOG] Message sent successfully`);
       } catch (error) {
-        console.error(`[LOG] Error in change_lesson handler for ${chatId}:`, error);
-        console.error(`[LOG] Error stack:`, error.stack);
+        console.error(`Error in change_lesson handler for ${chatId}:`, error);
+        console.error(`Error stack:`, error.stack);
         await bot.answerCallbackQuery(query.id, {
           text: "Произошла ошибка. Попробуйте еще раз.",
           show_alert: true,
@@ -854,22 +848,18 @@ bot.on("callback_query", async (query) => {
     else if (data.startsWith("change_subject_")) {
       try {
         const subjectId = data.replace("change_subject_", "");
-        console.log(`[LOG] change_subject_ called with subjectId: ${subjectId} for chatId: ${chatId}`);
         
         await bot.answerCallbackQuery(query.id);
 
         const student = await getStudentByTelegramId(chatId);
         if (!student) {
-          console.log(`[LOG] Student not found in change_subject`);
           await bot.sendMessage(chatId, "Вы не зарегистрированы.");
           return;
         }
 
-        console.log(`[LOG] Getting sections for subject ${subjectId}`);
 
         // Get sections for this subject
         const sections = await getSectionsForSubject(subjectId);
-        console.log(`[LOG] Found ${sections.length} sections for subject ${subjectId}`);
 
         if (sections.length === 0) {
           await bot.sendMessage(
@@ -892,9 +882,7 @@ bot.on("callback_query", async (query) => {
         // Get subject name for display
         const subjects = await getAvailableSubjects();
         const selectedSubject = subjects.find((s) => s.id === subjectId);
-        console.log(`[LOG] Selected subject:`, selectedSubject?.name);
 
-        console.log(`[LOG] Sending sections menu with ${sections.length} sections for change_subject`);
         await bot.sendMessage(
           chatId,
           `📖 Предмет: ${selectedSubject?.name || "Предмет"}\n\nВыберите раздел:`,
@@ -902,10 +890,9 @@ bot.on("callback_query", async (query) => {
             reply_markup: keyboard,
           }
         );
-        console.log(`[LOG] Sections menu sent successfully`);
       } catch (error) {
-        console.error(`[LOG] Error in change_subject handler for ${chatId}:`, error);
-        console.error(`[LOG] Error stack:`, error.stack);
+        console.error(`Error in change_subject handler for ${chatId}:`, error);
+        console.error(`Error stack:`, error.stack);
         await bot.answerCallbackQuery(query.id, {
           text: "Произошла ошибка. Попробуйте еще раз.",
           show_alert: true,
@@ -916,13 +903,11 @@ bot.on("callback_query", async (query) => {
     else if (data.startsWith("change_section_")) {
       try {
         const sectionId = data.replace("change_section_", "");
-        console.log(`[LOG] change_section_ called with sectionId: ${sectionId} for chatId: ${chatId}`);
         
         await bot.answerCallbackQuery(query.id);
 
         const student = await getStudentByTelegramId(chatId);
         if (!student) {
-          console.log(`[LOG] Student not found in change_section`);
           await bot.sendMessage(chatId, "Вы не зарегистрированы.");
           return;
         }
@@ -938,11 +923,9 @@ bot.on("callback_query", async (query) => {
           }
         }
 
-        console.log(`[LOG] Getting topics for section ${sectionId} with class: ${normalizedStudentClass}`);
 
         // Get topics for this section
         const topics = await getTopicsForSection(sectionId, normalizedStudentClass);
-        console.log(`[LOG] Found ${topics.length} topics for section ${sectionId}`);
 
         if (topics.length === 0) {
           await bot.sendMessage(
@@ -962,7 +945,6 @@ bot.on("callback_query", async (query) => {
           ]),
         };
 
-        console.log(`[LOG] Sending topics menu with ${topics.length} topics for change_section`);
         await bot.sendMessage(
           chatId,
           `📚 Выберите тему:`,
@@ -970,10 +952,9 @@ bot.on("callback_query", async (query) => {
             reply_markup: keyboard,
           }
         );
-        console.log(`[LOG] Topics menu sent successfully`);
       } catch (error) {
-        console.error(`[LOG] Error in change_section handler for ${chatId}:`, error);
-        console.error(`[LOG] Error stack:`, error.stack);
+        console.error(`Error in change_section handler for ${chatId}:`, error);
+        console.error(`Error stack:`, error.stack);
         await bot.answerCallbackQuery(query.id, {
           text: "Произошла ошибка. Попробуйте еще раз.",
           show_alert: true,
@@ -984,13 +965,11 @@ bot.on("callback_query", async (query) => {
     else if (data.startsWith("change_topic_")) {
       try {
         const topicId = data.replace("change_topic_", "");
-        console.log(`[LOG] change_topic_ called with topicId: ${topicId} for chatId: ${chatId}`);
         
         await bot.answerCallbackQuery(query.id);
 
         const student = await getStudentByTelegramId(chatId);
         if (!student) {
-          console.log(`[LOG] Student not found in change_topic`);
           await bot.sendMessage(chatId, "Вы не зарегистрированы.");
           return;
         }
@@ -1007,12 +986,9 @@ bot.on("callback_query", async (query) => {
         }
 
         const currentLessonId = student.fields["Текущий урок"]?.[0];
-        console.log(`[LOG] Current lesson ID: ${currentLessonId}`);
-        console.log(`[LOG] Getting lessons for topic ${topicId} with class: ${normalizedStudentClass}`);
 
         // Get lessons for this topic
         const lessons = await getLessonsForTopic(topicId, normalizedStudentClass);
-        console.log(`[LOG] Found ${lessons.length} lessons for topic ${topicId}`);
 
         if (lessons.length === 0) {
           await bot.sendMessage(
@@ -1036,9 +1012,7 @@ bot.on("callback_query", async (query) => {
         };
 
         const currentLessonName = lessons.find((l) => l.id === currentLessonId)?.name || "не назначен";
-        console.log(`[LOG] Current lesson name:`, currentLessonName);
 
-        console.log(`[LOG] Sending lessons menu with ${lessons.length} lessons for change_topic`);
         await bot.sendMessage(
           chatId,
           `📚 Текущий урок: ${currentLessonName}\n\nВыберите новый урок:`,
@@ -1046,10 +1020,9 @@ bot.on("callback_query", async (query) => {
             reply_markup: keyboard,
           }
         );
-        console.log(`[LOG] Lessons menu sent successfully`);
       } catch (error) {
-        console.error(`[LOG] Error in change_topic handler for ${chatId}:`, error);
-        console.error(`[LOG] Error stack:`, error.stack);
+        console.error(`Error in change_topic handler for ${chatId}:`, error);
+        console.error(`Error stack:`, error.stack);
         await bot.answerCallbackQuery(query.id, {
           text: "Произошла ошибка. Попробуйте еще раз.",
           show_alert: true,
@@ -1088,6 +1061,17 @@ bot.on("callback_query", async (query) => {
         if (!selectedLesson) {
           await bot.answerCallbackQuery(query.id, {
             text: "Урок не найден",
+            show_alert: true,
+          });
+          return;
+        }
+
+        // Check if there are tasks for this lesson before updating
+        const tasks = await getTasksForLesson(lessonId, normalizedClass);
+        
+        if (tasks.length === 0) {
+          await bot.answerCallbackQuery(query.id, {
+            text: "Для этого урока пока нет активных заданий",
             show_alert: true,
           });
           return;
@@ -1535,17 +1519,16 @@ bot.on("callback_query", async (query) => {
       }
     }
   } catch (error) {
-    console.error(`[LOG] ===== ERROR IN CALLBACK QUERY HANDLER =====`);
-    console.error(`[LOG] chatId: ${chatId}`);
-    console.error(`[LOG] callback_data: "${data}"`);
-    console.error(`[LOG] Error:`, error);
-    console.error(`[LOG] Error stack:`, error.stack);
+    console.error(` ===== ERROR IN CALLBACK QUERY HANDLER =====`);
+    console.error(` chatId: ${chatId}`);
+    console.error(` callback_data: "${data}"`);
+    console.error(`Error:`, error);
+    console.error(`Error stack:`, error.stack);
     await bot.answerCallbackQuery(query.id, {
       text: "Произошла ошибка. Попробуйте еще раз.",
       show_alert: true,
     });
   }
-  console.log(`[LOG] ===== CALLBACK QUERY HANDLED =====\n`);
 });
 
 // Handle regular messages (answers)
