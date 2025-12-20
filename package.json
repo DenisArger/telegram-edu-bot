@@ -1,7 +1,7 @@
 {
-  "name": "telegram-rus-bot",
+  "name": "telegram-edu-bot",
   "version": "1.0.0",
-  "description": "Telegram bot for Russian language lessons with Airtable integration",
+  "description": "Telegram bot for school lessons with Airtable integration",
   "type": "module",
   "main": "src/bot.js",
   "scripts": {

@@ -33,10 +33,26 @@ async function sendFirstTask(chatId, student) {
 
     // Get student class for task filtering
     const studentClass = student.fields["Класс"] || null;
+    console.log(`[DEBUG] Raw student class field for ${chatId}:`, JSON.stringify(studentClass), `(type: ${typeof studentClass})`);
+    
     // Handle Link field (array) - take first value if array
-    const classValue = Array.isArray(studentClass) ? studentClass[0] : studentClass;
+    let classValue = Array.isArray(studentClass) ? studentClass[0] : studentClass;
+    console.log(`[DEBUG] After array handling:`, JSON.stringify(classValue), `(type: ${typeof classValue})`);
+    
+    // Normalize class value - convert to string and trim
+    if (classValue !== null && classValue !== undefined && classValue !== "") {
+      classValue = String(classValue).trim();
+    } else {
+      classValue = null;
+    }
+    
+    // Debug logging
+    console.log(`[DEBUG] Final student class for ${chatId}:`, classValue, `(type: ${typeof classValue})`);
+    console.log(`[DEBUG] All student fields:`, Object.keys(student.fields).join(", "));
 
     const tasks = await getTasksForLesson(lessonId, classValue);
+    
+    console.log(`[DEBUG] Retrieved ${tasks.length} tasks for student ${chatId} (class: ${classValue})`);
 
     if (tasks.length === 0) {
       await bot.sendMessage(
@@ -259,7 +275,7 @@ bot.on("callback_query", async (query) => {
         return;
       }
 
-      await bot.sendMessage(chatId, "Начинаем урок русского языка ✍️");
+      await bot.sendMessage(chatId, "Начинаем урок ✍️");
       await sendFirstTask(chatId, student);
     }
     // Change lesson
@@ -615,6 +631,17 @@ bot.on("message", async (msg) => {
 // Error handling
 bot.on("polling_error", (error) => {
   console.error("Polling error:", error);
+  
+  // Handle 409 Conflict - another bot instance is running
+  if (error.code === 'ETELEGRAM' && error.response?.body?.error_code === 409) {
+    console.log("⚠️  Conflict detected: another bot instance is running.");
+    console.log("Waiting 10 seconds before retry...");
+    
+    setTimeout(() => {
+      console.log("🔄 Retrying bot connection...");
+      // The bot will automatically retry on next polling cycle
+    }, 10000);
+  }
 });
 
 console.log("Bot is running...");
