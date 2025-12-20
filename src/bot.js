@@ -6,6 +6,10 @@ import {
   createStudent,
   getAvailableLessons,
   updateStudentLesson,
+  getAvailableSubjects,
+  getSectionsForSubject,
+  getTopicsForSection,
+  getLessonsForTopic,
 } from "./student.js";
 import { getTasksForLesson, checkAnswer } from "./tasks.js";
 import { saveProgress } from "./progress.js";
@@ -21,9 +25,12 @@ const registrationState = new Map(); // Stores registration process state
  */
 async function sendFirstTask(chatId, student) {
   try {
+    console.log(`[LOG] sendFirstTask called for chatId: ${chatId}`);
     const lessonId = student.fields["Текущий урок"]?.[0];
+    console.log(`[LOG] Current lesson ID: ${lessonId}`);
 
     if (!lessonId) {
+      console.log(`[LOG] No lesson ID found`);
       await bot.sendMessage(
         chatId,
         "У вас не назначен текущий урок. Обратитесь к учителю."
@@ -51,9 +58,12 @@ async function sendFirstTask(chatId, student) {
       classValue = null;
     }
 
+    console.log(`[LOG] Getting tasks for lesson ${lessonId} with class ${classValue}`);
     const tasks = await getTasksForLesson(lessonId, classValue);
+    console.log(`[LOG] Found ${tasks.length} tasks for lesson`);
 
     if (tasks.length === 0) {
+      console.log(`[LOG] No tasks found for lesson`);
       await bot.sendMessage(
         chatId,
         "Для этого урока пока нет активных заданий."
@@ -67,6 +77,7 @@ async function sendFirstTask(chatId, student) {
       tasks: tasks,
       studentId: student.id,
     });
+    console.log(`[LOG] User state initialized with ${tasks.length} tasks`);
 
     // Send first task with navigation buttons
     const taskKeyboard = {
@@ -78,11 +89,14 @@ async function sendFirstTask(chatId, student) {
       ],
     };
 
+    console.log(`[LOG] Sending first task: "${tasks[0].text.substring(0, 50)}..."`);
     await bot.sendMessage(chatId, tasks[0].text, {
       reply_markup: taskKeyboard,
     });
+    console.log(`[LOG] First task sent successfully`);
   } catch (error) {
-    console.error(`Error sending first task to ${chatId}:`, error);
+    console.error(`[LOG] Error sending first task to ${chatId}:`, error);
+    console.error(`[LOG] Error stack:`, error.stack);
     await bot.sendMessage(
       chatId,
       "Произошла ошибка при загрузке заданий. Попробуйте позже."
@@ -114,10 +128,13 @@ bot.onText(/\/start/, async (msg) => {
       return;
     }
 
+    // Check if student has current lesson
+    const currentLessonId = student.fields["Текущий урок"]?.[0];
+    
     // Main menu for registered users
     const mainKeyboard = {
       inline_keyboard: [
-        [{ text: "▶️ Начать урок", callback_data: "start_lesson" }],
+        [{ text: "▶️ Начать урок", callback_data: currentLessonId ? "start_current_lesson" : "start_lesson" }],
         [{ text: "📚 Выбрать другой урок", callback_data: "change_lesson" }],
         [{ text: "ℹ️ Информация", callback_data: "show_info" }],
       ],
@@ -154,30 +171,30 @@ bot.onText(/\/register/, async (msg) => {
       return;
     }
 
-    // Get available lessons
-    const lessons = await getAvailableLessons();
+    // Get available subjects
+    const subjects = await getAvailableSubjects();
 
-    if (lessons.length === 0) {
+    if (subjects.length === 0) {
       await bot.sendMessage(
         chatId,
-        "К сожалению, пока нет доступных уроков. Обратитесь к учителю."
+        "К сожалению, пока нет доступных предметов. Обратитесь к учителю."
       );
       return;
     }
 
-    // Create keyboard with lesson options
+    // Create keyboard with subject options
     const keyboard = {
-      inline_keyboard: lessons.map((lesson, index) => [
+      inline_keyboard: subjects.map((subject) => [
         {
-          text: `${index + 1}. ${lesson.name}`,
-          callback_data: `register_lesson_${lesson.id}`,
+          text: subject.name,
+          callback_data: `register_subject_${subject.id}`,
         },
       ]),
     };
 
     await bot.sendMessage(
       chatId,
-      "Добро пожаловать! 👋\n\nВыберите урок для начала обучения:",
+      "Добро пожаловать! 👋\n\nВыберите предмет для начала обучения:",
       {
         reply_markup: keyboard,
       }
@@ -196,96 +213,785 @@ bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const data = query.data;
 
+  console.log(`[LOG] ===== CALLBACK QUERY RECEIVED =====`);
+  console.log(`[LOG] chatId: ${chatId}`);
+  console.log(`[LOG] callback_data: "${data}"`);
+  console.log(`[LOG] message_id: ${query.message.message_id}`);
+
   try {
-    // Registration flow
-    if (data.startsWith("register_lesson_")) {
-      const lessonId = data.replace("register_lesson_", "");
+    // Registration flow - select subject
+    if (data.startsWith("register_subject_")) {
+      try {
+        const subjectId = data.replace("register_subject_", "");
+        
+        await bot.answerCallbackQuery(query.id);
 
-      // Get lesson name for confirmation
-      const lessons = await getAvailableLessons();
-      const selectedLesson = lessons.find((l) => l.id === lessonId);
+        // Get sections for this subject
+        const sections = await getSectionsForSubject(subjectId);
 
-      // Create student record
-      const student = await createStudent(chatId, lessonId);
-
-      // Answer callback query
-      await bot.answerCallbackQuery(query.id, {
-        text: "Регистрация успешна! ✅",
-      });
-
-      // Send confirmation message with start button
-      const startKeyboard = {
-        inline_keyboard: [
-          [{ text: "▶️ Начать урок", callback_data: "start_lesson" }],
-        ],
-      };
-
-      await bot.sendMessage(
-        chatId,
-        `Отлично! Вы зарегистрированы на урок "${selectedLesson?.name || "урок"}".\n\nНажмите кнопку ниже, чтобы начать:`,
-        {
-          reply_markup: startKeyboard,
+        if (sections.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "Для этого предмета пока нет доступных разделов."
+          );
+          return;
         }
-      );
 
-      // Delete the registration message
-      await bot.deleteMessage(chatId, query.message.message_id);
+        // Create keyboard with section options
+        const keyboard = {
+          inline_keyboard: sections.map((section) => [
+            {
+              text: section.name,
+              callback_data: `register_section_${section.id}`,
+            },
+          ]),
+        };
+
+        // Get subject name for display
+        const subjects = await getAvailableSubjects();
+        const selectedSubject = subjects.find((s) => s.id === subjectId);
+
+        await bot.sendMessage(
+          chatId,
+          `📖 Предмет: ${selectedSubject?.name || "Предмет"}\n\nВыберите раздел:`,
+          {
+            reply_markup: keyboard,
+          }
+        );
+      } catch (error) {
+        console.error(`Error in register_subject handler for ${chatId}:`, error);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Registration flow - select section
+    else if (data.startsWith("register_section_")) {
+      try {
+        const sectionId = data.replace("register_section_", "");
+        
+        await bot.answerCallbackQuery(query.id);
+
+        // Get topics for this section
+        const topics = await getTopicsForSection(sectionId);
+
+        if (topics.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "Для этого раздела пока нет доступных тем."
+          );
+          return;
+        }
+
+        // Create keyboard with topic options
+        const keyboard = {
+          inline_keyboard: topics.map((topic) => [
+            {
+              text: topic.name,
+              callback_data: `register_topic_${topic.id}`,
+            },
+          ]),
+        };
+
+        await bot.sendMessage(
+          chatId,
+          `📚 Выберите тему:`,
+          {
+            reply_markup: keyboard,
+          }
+        );
+      } catch (error) {
+        console.error(`Error in register_section handler for ${chatId}:`, error);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Registration flow - select topic
+    else if (data.startsWith("register_topic_")) {
+      try {
+        const topicId = data.replace("register_topic_", "");
+        
+        await bot.answerCallbackQuery(query.id);
+
+        // Get lessons for this topic
+        const lessons = await getLessonsForTopic(topicId);
+
+        if (lessons.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "Для этой темы пока нет доступных уроков."
+          );
+          return;
+        }
+
+        // Create keyboard with lesson options
+        const keyboard = {
+          inline_keyboard: lessons.map((lesson) => [
+            {
+              text: lesson.name,
+              callback_data: `register_lesson_${lesson.id}`,
+            },
+          ]),
+        };
+
+        await bot.sendMessage(
+          chatId,
+          `📚 Выберите урок для начала обучения:`,
+          {
+            reply_markup: keyboard,
+          }
+        );
+      } catch (error) {
+        console.error(`Error in register_topic handler for ${chatId}:`, error);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Registration flow - select lesson
+    else if (data.startsWith("register_lesson_")) {
+      try {
+        const lessonId = data.replace("register_lesson_", "");
+
+        // Get lesson name for confirmation
+        const lessons = await getAvailableLessons();
+        const selectedLesson = lessons.find((l) => l.id === lessonId);
+
+        // Create student record
+        const student = await createStudent(chatId, lessonId);
+
+        // Answer callback query
+        await bot.answerCallbackQuery(query.id, {
+          text: "Регистрация успешна! ✅",
+        });
+
+        // Send confirmation message with start button
+        const startKeyboard = {
+          inline_keyboard: [
+            [{ text: "▶️ Начать урок", callback_data: "start_lesson" }],
+          ],
+        };
+
+        await bot.sendMessage(
+          chatId,
+          `Отлично! Вы зарегистрированы на урок "${selectedLesson?.name || "урок"}".\n\nНажмите кнопку ниже, чтобы начать:`,
+          {
+            reply_markup: startKeyboard,
+          }
+        );
+
+        // Delete the registration message
+        try {
+          await bot.deleteMessage(chatId, query.message.message_id);
+        } catch (e) {
+          // Ignore if message already deleted
+        }
+      } catch (error) {
+        console.error(`Error in register_lesson handler for ${chatId}:`, error);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка при регистрации. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
     }
     // Start registration from main menu
     else if (data === "start_register") {
-      await bot.answerCallbackQuery(query.id);
-      // Trigger registration flow
-      const lessons = await getAvailableLessons();
+      try {
+        await bot.answerCallbackQuery(query.id);
+        
+        // Get available subjects
+        const subjects = await getAvailableSubjects();
 
-      if (lessons.length === 0) {
+        if (subjects.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "К сожалению, пока нет доступных предметов. Обратитесь к учителю."
+          );
+          return;
+        }
+
+        const keyboard = {
+          inline_keyboard: subjects.map((subject) => [
+            {
+              text: subject.name,
+              callback_data: `register_subject_${subject.id}`,
+            },
+          ]),
+        };
+
         await bot.sendMessage(
           chatId,
-          "К сожалению, пока нет доступных уроков. Обратитесь к учителю."
-        );
-        return;
-      }
-
-      const keyboard = {
-        inline_keyboard: lessons.map((lesson, index) => [
+          "Добро пожаловать! 👋\n\nВыберите предмет для начала обучения:",
           {
-            text: `${index + 1}. ${lesson.name}`,
-            callback_data: `register_lesson_${lesson.id}`,
-          },
-        ]),
-      };
-
-      await bot.sendMessage(
-        chatId,
-        "Добро пожаловать! 👋\n\nВыберите урок для начала обучения:",
-        {
-          reply_markup: keyboard,
-        }
-      );
-    }
-    // Start lesson
-    else if (data === "start_lesson") {
-      await bot.answerCallbackQuery(query.id, { text: "Загружаем урок..." });
-
-      const student = await getStudentByTelegramId(chatId);
-      if (!student) {
-        await bot.sendMessage(chatId, "Вы не зарегистрированы.");
-        return;
+            reply_markup: keyboard,
+          }
+        );
+      } catch (error) {
+        console.error(`Error in start_register handler for ${chatId}:`, error);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
       }
-
-      await bot.sendMessage(chatId, "Начинаем урок ✍️");
-      await sendFirstTask(chatId, student);
     }
-    // Change lesson
-    else if (data === "change_lesson") {
+    // Start lesson - show subjects menu
+    else if (data === "start_lesson") {
       try {
+        console.log(`[LOG] start_lesson called for chatId: ${chatId}`);
+        await bot.answerCallbackQuery(query.id);
+
+        const student = await getStudentByTelegramId(chatId);
+        console.log(`[LOG] Student found:`, student ? "yes" : "no");
+        if (!student) {
+          console.log(`[LOG] Student not found, sending message`);
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
+          return;
+        }
+
+        // Get student class for filtering
+        const studentClass = student.fields["Класс"] || null;
+        console.log(`[LOG] Student class (raw):`, studentClass);
+        let normalizedStudentClass = null;
+        if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+          if (typeof studentClass === 'object' && studentClass.name !== undefined) {
+            normalizedStudentClass = String(studentClass.name).trim();
+          } else {
+            normalizedStudentClass = String(studentClass).trim();
+          }
+        }
+        console.log(`[LOG] Normalized student class:`, normalizedStudentClass);
+
+        // Get available subjects
+        console.log(`[LOG] Calling getAvailableSubjects with class: ${normalizedStudentClass}`);
+        const subjects = await getAvailableSubjects(normalizedStudentClass);
+        console.log(`[LOG] getAvailableSubjects returned ${subjects.length} subjects`);
+        console.log(`[LOG] Subjects:`, subjects.map(s => ({ id: s.id, name: s.name })));
+
+        if (subjects.length === 0) {
+          console.log(`[LOG] No subjects found, sending message`);
+          await bot.sendMessage(
+            chatId,
+            "К сожалению, пока нет доступных предметов."
+          );
+          return;
+        }
+
+        // Create keyboard with subjects
+        const keyboard = {
+          inline_keyboard: subjects.map((subject) => [
+            {
+              text: subject.name,
+              callback_data: `select_subject_${subject.id}`,
+            },
+          ]),
+        };
+        console.log(`[LOG] Created keyboard with ${subjects.length} subjects`);
+        console.log(`[LOG] Keyboard buttons:`, keyboard.inline_keyboard.map(btn => btn[0].text));
+
+        console.log(`[LOG] Sending message with subjects menu`);
+        await bot.sendMessage(
+          chatId,
+          "📚 Выберите предмет:",
+          {
+            reply_markup: keyboard,
+          }
+        );
+        console.log(`[LOG] Message sent successfully`);
+      } catch (error) {
+        console.error(`[LOG] Error in start_lesson handler for ${chatId}:`, error);
+        console.error(`[LOG] Error stack:`, error.stack);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Start current lesson - begin tasks immediately
+    else if (data === "start_current_lesson") {
+      try {
+        console.log(`[LOG] start_current_lesson called for chatId: ${chatId}`);
+        await bot.answerCallbackQuery(query.id, { text: "Загружаем урок..." });
+
+        const student = await getStudentByTelegramId(chatId);
+        if (!student) {
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
+          return;
+        }
+
+        const lessonId = student.fields["Текущий урок"]?.[0];
+        if (!lessonId) {
+          await bot.sendMessage(
+            chatId,
+            "У вас не назначен текущий урок. Выберите урок из меню."
+          );
+          return;
+        }
+
+        console.log(`[LOG] Starting current lesson ${lessonId}`);
+        await bot.sendMessage(chatId, "Начинаем урок ✍️");
+        await sendFirstTask(chatId, student);
+        console.log(`[LOG] Current lesson started successfully`);
+      } catch (error) {
+        console.error(`[LOG] Error in start_current_lesson handler for ${chatId}:`, error);
+        console.error(`[LOG] Error stack:`, error.stack);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Select subject - show sections for this subject
+    else if (data.startsWith("select_subject_")) {
+      try {
+        const subjectId = data.replace("select_subject_", "");
+        console.log(`[LOG] select_subject_ called with subjectId: ${subjectId} for chatId: ${chatId}`);
+        
         await bot.answerCallbackQuery(query.id);
 
         const student = await getStudentByTelegramId(chatId);
         if (!student) {
+          console.log(`[LOG] Student not found in select_subject`);
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
+          return;
+        }
+
+        console.log(`[LOG] Getting sections for subject ${subjectId}`);
+
+        // Get sections for this subject
+        const sections = await getSectionsForSubject(subjectId);
+        console.log(`[LOG] Found ${sections.length} sections for subject ${subjectId}`);
+
+        if (sections.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "Для этого предмета пока нет доступных разделов."
+          );
+          return;
+        }
+
+        // Create keyboard with sections
+        const keyboard = {
+          inline_keyboard: sections.map((section) => [
+            {
+              text: section.name,
+              callback_data: `select_section_${section.id}`,
+            },
+          ]),
+        };
+
+        // Get subject name for display
+        const subjects = await getAvailableSubjects();
+        const selectedSubject = subjects.find((s) => s.id === subjectId);
+        console.log(`[LOG] Selected subject:`, selectedSubject?.name);
+
+        console.log(`[LOG] Sending sections menu with ${sections.length} sections`);
+        await bot.sendMessage(
+          chatId,
+          `📖 Предмет: ${selectedSubject?.name || "Предмет"}\n\nВыберите раздел:`,
+          {
+            reply_markup: keyboard,
+          }
+        );
+        console.log(`[LOG] Sections menu sent successfully`);
+      } catch (error) {
+        console.error(`[LOG] Error in select_subject handler for ${chatId}:`, error);
+        console.error(`[LOG] Error stack:`, error.stack);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Select section - show topics for this section
+    else if (data.startsWith("select_section_")) {
+      try {
+        const sectionId = data.replace("select_section_", "");
+        console.log(`[LOG] select_section_ called with sectionId: ${sectionId} for chatId: ${chatId}`);
+        
+        await bot.answerCallbackQuery(query.id);
+
+        const student = await getStudentByTelegramId(chatId);
+        if (!student) {
+          console.log(`[LOG] Student not found in select_section`);
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
+          return;
+        }
+
+        // Get student class for filtering
+        const studentClass = student.fields["Класс"] || null;
+        let normalizedStudentClass = null;
+        if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+          if (typeof studentClass === 'object' && studentClass.name !== undefined) {
+            normalizedStudentClass = String(studentClass.name).trim();
+          } else {
+            normalizedStudentClass = String(studentClass).trim();
+          }
+        }
+        console.log(`[LOG] Getting topics for section ${sectionId} with class: ${normalizedStudentClass}`);
+
+        // Get topics for this section
+        const topics = await getTopicsForSection(sectionId, normalizedStudentClass);
+        console.log(`[LOG] Found ${topics.length} topics for section ${sectionId}`);
+
+        if (topics.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "Для этого раздела пока нет доступных тем."
+          );
+          return;
+        }
+
+        // Create keyboard with topics
+        const keyboard = {
+          inline_keyboard: topics.map((topic) => [
+            {
+              text: topic.name,
+              callback_data: `select_topic_${topic.id}`,
+            },
+          ]),
+        };
+
+        console.log(`[LOG] Sending topics menu with ${topics.length} topics`);
+        await bot.sendMessage(
+          chatId,
+          `📚 Выберите тему:`,
+          {
+            reply_markup: keyboard,
+          }
+        );
+        console.log(`[LOG] Topics menu sent successfully`);
+      } catch (error) {
+        console.error(`[LOG] Error in select_section handler for ${chatId}:`, error);
+        console.error(`[LOG] Error stack:`, error.stack);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Select topic - show lessons for this topic
+    else if (data.startsWith("select_topic_")) {
+      try {
+        const topicId = data.replace("select_topic_", "");
+        console.log(`[LOG] select_topic_ called with topicId: ${topicId} for chatId: ${chatId}`);
+        
+        await bot.answerCallbackQuery(query.id);
+
+        const student = await getStudentByTelegramId(chatId);
+        if (!student) {
+          console.log(`[LOG] Student not found in select_topic`);
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
+          return;
+        }
+
+        // Get student class for filtering
+        const studentClass = student.fields["Класс"] || null;
+        let normalizedStudentClass = null;
+        if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+          if (typeof studentClass === 'object' && studentClass.name !== undefined) {
+            normalizedStudentClass = String(studentClass.name).trim();
+          } else {
+            normalizedStudentClass = String(studentClass).trim();
+          }
+        }
+        console.log(`[LOG] Getting lessons for topic ${topicId} with class: ${normalizedStudentClass}`);
+
+        // Get lessons for this topic
+        const lessons = await getLessonsForTopic(topicId, normalizedStudentClass);
+        console.log(`[LOG] Found ${lessons.length} lessons for topic ${topicId}`);
+
+        if (lessons.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "Для этой темы пока нет доступных уроков."
+          );
+          return;
+        }
+
+        // Create keyboard with lessons
+        const keyboard = {
+          inline_keyboard: lessons.map((lesson) => [
+            {
+              text: lesson.name,
+              callback_data: `select_lesson_${lesson.id}`,
+            },
+          ]),
+        };
+
+        console.log(`[LOG] Sending lessons menu with ${lessons.length} lessons`);
+        await bot.sendMessage(
+          chatId,
+          `📚 Выберите урок:`,
+          {
+            reply_markup: keyboard,
+          }
+        );
+        console.log(`[LOG] Lessons menu sent successfully`);
+      } catch (error) {
+        console.error(`[LOG] Error in select_topic handler for ${chatId}:`, error);
+        console.error(`[LOG] Error stack:`, error.stack);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Select lesson - start tasks
+    else if (data.startsWith("select_lesson_")) {
+      try {
+        const lessonId = data.replace("select_lesson_", "");
+        console.log(`[LOG] select_lesson_ called with lessonId: ${lessonId} for chatId: ${chatId}`);
+        
+        await bot.answerCallbackQuery(query.id, { text: "Загружаем урок..." });
+
+        const student = await getStudentByTelegramId(chatId);
+        if (!student) {
+          console.log(`[LOG] Student not found in select_lesson`);
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
+          return;
+        }
+
+        console.log(`[LOG] Updating student lesson to: ${lessonId}`);
+        // Update student's current lesson
+        await updateStudentLesson(student.id, lessonId);
+
+        // Get updated student data
+        const updatedStudent = await getStudentByTelegramId(chatId);
+        console.log(`[LOG] Student lesson updated, sending first task`);
+
+        await bot.sendMessage(chatId, "Начинаем урок ✍️");
+        await sendFirstTask(chatId, updatedStudent);
+        console.log(`[LOG] First task sent successfully`);
+      } catch (error) {
+        console.error(`[LOG] Error in select_lesson handler for ${chatId}:`, error);
+        console.error(`[LOG] Error stack:`, error.stack);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка при загрузке урока. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Change lesson - show subjects menu
+    else if (data === "change_lesson") {
+      try {
+        console.log(`[LOG] change_lesson called for chatId: ${chatId}`);
+        await bot.answerCallbackQuery(query.id);
+
+        const student = await getStudentByTelegramId(chatId);
+        console.log(`[LOG] Student found:`, student ? "yes" : "no");
+        if (!student) {
+          console.log(`[LOG] Student not found, sending message`);
           await bot.sendMessage(
             chatId,
             "Вы не зарегистрированы. Используйте /register для регистрации."
           );
+          return;
+        }
+
+        // Get student class for filtering
+        const studentClass = student.fields["Класс"] || null;
+        console.log(`[LOG] Student class (raw):`, studentClass);
+        let normalizedStudentClass = null;
+        if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+          if (typeof studentClass === 'object' && studentClass.name !== undefined) {
+            normalizedStudentClass = String(studentClass.name).trim();
+          } else {
+            normalizedStudentClass = String(studentClass).trim();
+          }
+        }
+        console.log(`[LOG] Normalized student class:`, normalizedStudentClass);
+
+        // Get available subjects
+        console.log(`[LOG] Calling getAvailableSubjects with class: ${normalizedStudentClass}`);
+        const subjects = await getAvailableSubjects(normalizedStudentClass);
+        console.log(`[LOG] getAvailableSubjects returned ${subjects.length} subjects`);
+        console.log(`[LOG] Subjects:`, subjects.map(s => ({ id: s.id, name: s.name })));
+
+        if (subjects.length === 0) {
+          console.log(`[LOG] No subjects found, sending message`);
+          await bot.sendMessage(
+            chatId,
+            "К сожалению, пока нет доступных предметов."
+          );
+          return;
+        }
+
+        // Create keyboard with subjects
+        const keyboard = {
+          inline_keyboard: subjects.map((subject) => [
+            {
+              text: subject.name,
+              callback_data: `change_subject_${subject.id}`,
+            },
+          ]),
+        };
+        console.log(`[LOG] Created keyboard with ${subjects.length} subjects`);
+        console.log(`[LOG] Keyboard buttons:`, keyboard.inline_keyboard.map(btn => btn[0].text));
+
+        console.log(`[LOG] Sending message with subjects menu for change_lesson`);
+        await bot.sendMessage(
+          chatId,
+          "📚 Выберите предмет для смены урока:",
+          {
+            reply_markup: keyboard,
+          }
+        );
+        console.log(`[LOG] Message sent successfully`);
+      } catch (error) {
+        console.error(`[LOG] Error in change_lesson handler for ${chatId}:`, error);
+        console.error(`[LOG] Error stack:`, error.stack);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Change subject - show sections for this subject
+    else if (data.startsWith("change_subject_")) {
+      try {
+        const subjectId = data.replace("change_subject_", "");
+        console.log(`[LOG] change_subject_ called with subjectId: ${subjectId} for chatId: ${chatId}`);
+        
+        await bot.answerCallbackQuery(query.id);
+
+        const student = await getStudentByTelegramId(chatId);
+        if (!student) {
+          console.log(`[LOG] Student not found in change_subject`);
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
+          return;
+        }
+
+        console.log(`[LOG] Getting sections for subject ${subjectId}`);
+
+        // Get sections for this subject
+        const sections = await getSectionsForSubject(subjectId);
+        console.log(`[LOG] Found ${sections.length} sections for subject ${subjectId}`);
+
+        if (sections.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "Для этого предмета пока нет доступных разделов."
+          );
+          return;
+        }
+
+        // Create keyboard with sections
+        const keyboard = {
+          inline_keyboard: sections.map((section) => [
+            {
+              text: section.name,
+              callback_data: `change_section_${section.id}`,
+            },
+          ]),
+        };
+
+        // Get subject name for display
+        const subjects = await getAvailableSubjects();
+        const selectedSubject = subjects.find((s) => s.id === subjectId);
+        console.log(`[LOG] Selected subject:`, selectedSubject?.name);
+
+        console.log(`[LOG] Sending sections menu with ${sections.length} sections for change_subject`);
+        await bot.sendMessage(
+          chatId,
+          `📖 Предмет: ${selectedSubject?.name || "Предмет"}\n\nВыберите раздел:`,
+          {
+            reply_markup: keyboard,
+          }
+        );
+        console.log(`[LOG] Sections menu sent successfully`);
+      } catch (error) {
+        console.error(`[LOG] Error in change_subject handler for ${chatId}:`, error);
+        console.error(`[LOG] Error stack:`, error.stack);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Change section - show topics for this section
+    else if (data.startsWith("change_section_")) {
+      try {
+        const sectionId = data.replace("change_section_", "");
+        console.log(`[LOG] change_section_ called with sectionId: ${sectionId} for chatId: ${chatId}`);
+        
+        await bot.answerCallbackQuery(query.id);
+
+        const student = await getStudentByTelegramId(chatId);
+        if (!student) {
+          console.log(`[LOG] Student not found in change_section`);
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
+          return;
+        }
+
+        // Get student class for filtering
+        const studentClass = student.fields["Класс"] || null;
+        let normalizedStudentClass = null;
+        if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+          if (typeof studentClass === 'object' && studentClass.name !== undefined) {
+            normalizedStudentClass = String(studentClass.name).trim();
+          } else {
+            normalizedStudentClass = String(studentClass).trim();
+          }
+        }
+
+        console.log(`[LOG] Getting topics for section ${sectionId} with class: ${normalizedStudentClass}`);
+
+        // Get topics for this section
+        const topics = await getTopicsForSection(sectionId, normalizedStudentClass);
+        console.log(`[LOG] Found ${topics.length} topics for section ${sectionId}`);
+
+        if (topics.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "Для этого раздела пока нет доступных тем."
+          );
+          return;
+        }
+
+        // Create keyboard with topics
+        const keyboard = {
+          inline_keyboard: topics.map((topic) => [
+            {
+              text: topic.name,
+              callback_data: `change_topic_${topic.id}`,
+            },
+          ]),
+        };
+
+        console.log(`[LOG] Sending topics menu with ${topics.length} topics for change_section`);
+        await bot.sendMessage(
+          chatId,
+          `📚 Выберите тему:`,
+          {
+            reply_markup: keyboard,
+          }
+        );
+        console.log(`[LOG] Topics menu sent successfully`);
+      } catch (error) {
+        console.error(`[LOG] Error in change_section handler for ${chatId}:`, error);
+        console.error(`[LOG] Error stack:`, error.stack);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Change topic - show lessons for this topic
+    else if (data.startsWith("change_topic_")) {
+      try {
+        const topicId = data.replace("change_topic_", "");
+        console.log(`[LOG] change_topic_ called with topicId: ${topicId} for chatId: ${chatId}`);
+        
+        await bot.answerCallbackQuery(query.id);
+
+        const student = await getStudentByTelegramId(chatId);
+        if (!student) {
+          console.log(`[LOG] Student not found in change_topic`);
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
           return;
         }
 
@@ -301,14 +1007,17 @@ bot.on("callback_query", async (query) => {
         }
 
         const currentLessonId = student.fields["Текущий урок"]?.[0];
+        console.log(`[LOG] Current lesson ID: ${currentLessonId}`);
+        console.log(`[LOG] Getting lessons for topic ${topicId} with class: ${normalizedStudentClass}`);
 
-        // Get lessons filtered by student class
-        const lessons = await getAvailableLessons(normalizedStudentClass);
-        
+        // Get lessons for this topic
+        const lessons = await getLessonsForTopic(topicId, normalizedStudentClass);
+        console.log(`[LOG] Found ${lessons.length} lessons for topic ${topicId}`);
+
         if (lessons.length === 0) {
           await bot.sendMessage(
             chatId,
-            "К сожалению, пока нет доступных уроков."
+            "Для этой темы пока нет доступных уроков."
           );
           return;
         }
@@ -327,16 +1036,20 @@ bot.on("callback_query", async (query) => {
         };
 
         const currentLessonName = lessons.find((l) => l.id === currentLessonId)?.name || "не назначен";
+        console.log(`[LOG] Current lesson name:`, currentLessonName);
 
+        console.log(`[LOG] Sending lessons menu with ${lessons.length} lessons for change_topic`);
         await bot.sendMessage(
           chatId,
-          `📚 Выбор урока\n\nТекущий урок: ${currentLessonName}\n\nВыберите новый урок:`,
+          `📚 Текущий урок: ${currentLessonName}\n\nВыберите новый урок:`,
           {
             reply_markup: keyboard,
           }
         );
+        console.log(`[LOG] Lessons menu sent successfully`);
       } catch (error) {
-        console.error(`Error in change_lesson handler for ${chatId}:`, error);
+        console.error(`[LOG] Error in change_topic handler for ${chatId}:`, error);
+        console.error(`[LOG] Error stack:`, error.stack);
         await bot.answerCallbackQuery(query.id, {
           text: "Произошла ошибка. Попробуйте еще раз.",
           show_alert: true,
@@ -394,9 +1107,13 @@ bot.on("callback_query", async (query) => {
           // Ignore if message already deleted
         }
 
+        // Get updated student data
+        const updatedStudent = await getStudentByTelegramId(chatId);
+
         const startKeyboard = {
           inline_keyboard: [
-            [{ text: "▶️ Начать новый урок", callback_data: "start_lesson" }],
+            [{ text: "▶️ Начать урок", callback_data: "start_current_lesson" }],
+            [{ text: "📚 Выбрать другой урок", callback_data: "change_lesson" }],
             [{ text: "🏠 Главное меню", callback_data: "main_menu" }],
           ],
         };
@@ -470,17 +1187,264 @@ bot.on("callback_query", async (query) => {
         reply_markup: endKeyboard,
       });
     }
-    // Restart lesson
+    // Restart lesson - show subjects menu
     else if (data === "restart_lesson") {
-      await bot.answerCallbackQuery(query.id, { text: "Перезапускаем урок..." });
+      try {
+        await bot.answerCallbackQuery(query.id);
 
-      const student = await getStudentByTelegramId(chatId);
-      if (!student) {
-        await bot.sendMessage(chatId, "Вы не зарегистрированы.");
-        return;
+        const student = await getStudentByTelegramId(chatId);
+        if (!student) {
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
+          return;
+        }
+
+        // Get student class for filtering
+        const studentClass = student.fields["Класс"] || null;
+        let normalizedStudentClass = null;
+        if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+          if (typeof studentClass === 'object' && studentClass.name !== undefined) {
+            normalizedStudentClass = String(studentClass.name).trim();
+          } else {
+            normalizedStudentClass = String(studentClass).trim();
+          }
+        }
+
+        // Get available subjects
+        const subjects = await getAvailableSubjects(normalizedStudentClass);
+
+        if (subjects.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "К сожалению, пока нет доступных предметов."
+          );
+          return;
+        }
+
+        // Create keyboard with subjects
+        const keyboard = {
+          inline_keyboard: subjects.map((subject) => [
+            {
+              text: subject.name,
+              callback_data: `restart_subject_${subject.id}`,
+            },
+          ]),
+        };
+
+        await bot.sendMessage(
+          chatId,
+          "📚 Выберите предмет для повторного прохождения:",
+          {
+            reply_markup: keyboard,
+          }
+        );
+      } catch (error) {
+        console.error(`Error in restart_lesson handler for ${chatId}:`, error);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
       }
+    }
+    // Restart subject - show sections for this subject
+    else if (data.startsWith("restart_subject_")) {
+      try {
+        const subjectId = data.replace("restart_subject_", "");
+        
+        await bot.answerCallbackQuery(query.id);
 
-      await sendFirstTask(chatId, student);
+        const student = await getStudentByTelegramId(chatId);
+        if (!student) {
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
+          return;
+        }
+
+        // Get sections for this subject
+        const sections = await getSectionsForSubject(subjectId);
+
+        if (sections.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "Для этого предмета пока нет доступных разделов."
+          );
+          return;
+        }
+
+        // Create keyboard with sections
+        const keyboard = {
+          inline_keyboard: sections.map((section) => [
+            {
+              text: section.name,
+              callback_data: `restart_section_${section.id}`,
+            },
+          ]),
+        };
+
+        // Get subject name for display
+        const subjects = await getAvailableSubjects();
+        const selectedSubject = subjects.find((s) => s.id === subjectId);
+
+        await bot.sendMessage(
+          chatId,
+          `📖 Предмет: ${selectedSubject?.name || "Предмет"}\n\nВыберите раздел:`,
+          {
+            reply_markup: keyboard,
+          }
+        );
+      } catch (error) {
+        console.error(`Error in restart_subject handler for ${chatId}:`, error);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Restart section - show topics for this section
+    else if (data.startsWith("restart_section_")) {
+      try {
+        const sectionId = data.replace("restart_section_", "");
+        
+        await bot.answerCallbackQuery(query.id);
+
+        const student = await getStudentByTelegramId(chatId);
+        if (!student) {
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
+          return;
+        }
+
+        // Get student class for filtering
+        const studentClass = student.fields["Класс"] || null;
+        let normalizedStudentClass = null;
+        if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+          if (typeof studentClass === 'object' && studentClass.name !== undefined) {
+            normalizedStudentClass = String(studentClass.name).trim();
+          } else {
+            normalizedStudentClass = String(studentClass).trim();
+          }
+        }
+
+        // Get topics for this section
+        const topics = await getTopicsForSection(sectionId, normalizedStudentClass);
+
+        if (topics.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "Для этого раздела пока нет доступных тем."
+          );
+          return;
+        }
+
+        // Create keyboard with topics
+        const keyboard = {
+          inline_keyboard: topics.map((topic) => [
+            {
+              text: topic.name,
+              callback_data: `restart_topic_${topic.id}`,
+            },
+          ]),
+        };
+
+        await bot.sendMessage(
+          chatId,
+          `📚 Выберите тему:`,
+          {
+            reply_markup: keyboard,
+          }
+        );
+      } catch (error) {
+        console.error(`Error in restart_section handler for ${chatId}:`, error);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Restart topic - show lessons for this topic
+    else if (data.startsWith("restart_topic_")) {
+      try {
+        const topicId = data.replace("restart_topic_", "");
+        
+        await bot.answerCallbackQuery(query.id);
+
+        const student = await getStudentByTelegramId(chatId);
+        if (!student) {
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
+          return;
+        }
+
+        // Get student class for filtering
+        const studentClass = student.fields["Класс"] || null;
+        let normalizedStudentClass = null;
+        if (studentClass !== null && studentClass !== undefined && studentClass !== "") {
+          if (typeof studentClass === 'object' && studentClass.name !== undefined) {
+            normalizedStudentClass = String(studentClass.name).trim();
+          } else {
+            normalizedStudentClass = String(studentClass).trim();
+          }
+        }
+
+        // Get lessons for this topic
+        const lessons = await getLessonsForTopic(topicId, normalizedStudentClass);
+
+        if (lessons.length === 0) {
+          await bot.sendMessage(
+            chatId,
+            "Для этой темы пока нет доступных уроков."
+          );
+          return;
+        }
+
+        // Create keyboard with lessons
+        const keyboard = {
+          inline_keyboard: lessons.map((lesson) => [
+            {
+              text: lesson.name,
+              callback_data: `restart_lesson_${lesson.id}`,
+            },
+          ]),
+        };
+
+        await bot.sendMessage(
+          chatId,
+          `📚 Выберите урок для повторного прохождения:`,
+          {
+            reply_markup: keyboard,
+          }
+        );
+      } catch (error) {
+        console.error(`Error in restart_topic handler for ${chatId}:`, error);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
+    }
+    // Restart specific lesson - start tasks
+    else if (data.startsWith("restart_lesson_")) {
+      try {
+        const lessonId = data.replace("restart_lesson_", "");
+        
+        await bot.answerCallbackQuery(query.id, { text: "Перезапускаем урок..." });
+
+        const student = await getStudentByTelegramId(chatId);
+        if (!student) {
+          await bot.sendMessage(chatId, "Вы не зарегистрированы.");
+          return;
+        }
+
+        // Update student's current lesson
+        await updateStudentLesson(student.id, lessonId);
+
+        // Get updated student data
+        const updatedStudent = await getStudentByTelegramId(chatId);
+
+        await sendFirstTask(chatId, updatedStudent);
+      } catch (error) {
+        console.error(`Error in restart_lesson handler for ${chatId}:`, error);
+        await bot.answerCallbackQuery(query.id, {
+          text: "Произошла ошибка при перезапуске урока. Попробуйте еще раз.",
+          show_alert: true,
+        });
+      }
     }
     // Main menu
     else if (data === "main_menu") {
@@ -504,9 +1468,12 @@ bot.on("callback_query", async (query) => {
         return;
       }
 
+      // Check if student has current lesson
+      const currentLessonId = student.fields["Текущий урок"]?.[0];
+      
       const mainKeyboard = {
         inline_keyboard: [
-          [{ text: "▶️ Начать урок", callback_data: "start_lesson" }],
+          [{ text: "▶️ Начать урок", callback_data: currentLessonId ? "start_current_lesson" : "start_lesson" }],
           [{ text: "📚 Выбрать другой урок", callback_data: "change_lesson" }],
           [{ text: "ℹ️ Информация", callback_data: "show_info" }],
         ],
@@ -568,12 +1535,17 @@ bot.on("callback_query", async (query) => {
       }
     }
   } catch (error) {
-    console.error(`Error handling callback query for ${chatId}:`, error);
+    console.error(`[LOG] ===== ERROR IN CALLBACK QUERY HANDLER =====`);
+    console.error(`[LOG] chatId: ${chatId}`);
+    console.error(`[LOG] callback_data: "${data}"`);
+    console.error(`[LOG] Error:`, error);
+    console.error(`[LOG] Error stack:`, error.stack);
     await bot.answerCallbackQuery(query.id, {
       text: "Произошла ошибка. Попробуйте еще раз.",
       show_alert: true,
     });
   }
+  console.log(`[LOG] ===== CALLBACK QUERY HANDLED =====\n`);
 });
 
 // Handle regular messages (answers)
