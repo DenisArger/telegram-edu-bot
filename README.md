@@ -1,53 +1,95 @@
-# Telegram Bot для школьных уроков
+# Telegram Edu Bot
 
-Telegram-бот для выдачи заданий по школьным предметам с интеграцией Airtable.
+## English
 
-## Краткое описание
+## Problem
+Teachers need a simple way to distribute lessons and tasks in Telegram while managing educational data without editing code.
 
-Бот предназначен для учеников и работает исключительно через Telegram. Учитель управляет данными через Airtable без необходимости работы с кодом.
+## Solution
+This bot integrates Telegram with Airtable so students receive tasks in chat and teachers manage curriculum content in Airtable tables.
 
-## Быстрый старт
+## Tech Stack
+- Node.js
+- JavaScript (ESM)
+- `node-telegram-bot-api`
+- Airtable SDK
+- dotenv
 
-1. Установите зависимости:
+## Architecture
+Top-level structure:
+```text
+src/
+package.json
+Procfile
+```
+
+```mermaid
+flowchart TD
+  A[Student in Telegram] --> B[Bot Handlers src/bot.js]
+  B --> C[Student/Task Services]
+  C --> D[Airtable Base]
+  D --> B
+  B --> A
+```
+
+## Features
+- Telegram bot user flows (`/start`, lesson/task interactions)
+- Student registration flow
+- Task retrieval and answer checking
+- Airtable-backed lesson and progress data
+
+## How to Run
 ```bash
 yarn install
-```
-
-2. Создайте файл `.env` и заполните переменные окружения:
-```env
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-AIRTABLE_API_KEY=your_airtable_api_key
-AIRTABLE_BASE_ID=your_base_id
-```
-
-3. Запустите бота:
-```bash
+cp .env.example .env
 yarn start
 ```
 
-## Полная документация
+Required variables: `TELEGRAM_BOT_TOKEN`, `AIRTABLE_API_KEY`, `AIRTABLE_BASE_ID`.
 
-Вся подробная документация находится в каталоге [`.memory-bank`](.memory-bank/):
+## Русский
 
-- **[teacher-guide.md](.memory-bank/teacher-guide.md)** ⭐ - **Руководство для учителя**: как создавать задания в Airtable
-- **[project-overview.md](.memory-bank/project-overview.md)** - Общий обзор проекта, возможности, технологический стек
-- **[architecture.md](.memory-bank/architecture.md)** - Архитектура проекта, модульная структура, потоки данных
-- **[code-structure.md](.memory-bank/code-structure.md)** - Детальная структура кода, описание функций
-- **[setup-and-deployment.md](.memory-bank/setup-and-deployment.md)** - Настройка и деплой на различные платформы
-- **[documentation-index.md](.memory-bank/documentation-index.md)** - Индекс всей документации проекта
+## Проблема
+Учителям нужен простой способ выдавать уроки и задания в Telegram, управляя контентом без правки кода.
 
-## Основные команды
+## Решение
+Бот связывает Telegram и Airtable: ученики получают задания в чате, а учитель управляет учебными данными в Airtable.
 
-- `/start` - Главное меню
-- `/register` - Регистрация нового ученика
+## Стек
+- Node.js
+- JavaScript (ESM)
+- `node-telegram-bot-api`
+- Airtable SDK
+- dotenv
 
-## Технологии
+## Архитектура
+Верхнеуровневая структура:
+```text
+src/
+package.json
+Procfile
+```
 
-- Node.js ≥ 18
-- node-telegram-bot-api
-- Airtable API
-- ES Modules
+```mermaid
+flowchart TD
+  A[Ученик в Telegram] --> B[Обработчики бота src/bot.js]
+  B --> C[Сервисы учеников и заданий]
+  C --> D[Airtable Base]
+  D --> B
+  B --> A
+```
 
-## Лицензия
+## Возможности
+- Сценарии взаимодействия в Telegram (`/start`, уроки, задания)
+- Процесс регистрации ученика
+- Выдача задач и проверка ответов
+- Хранение учебных данных в Airtable
 
-ISC
+## Как запустить
+```bash
+yarn install
+cp .env.example .env
+yarn start
+```
+
+Обязательные переменные: `TELEGRAM_BOT_TOKEN`, `AIRTABLE_API_KEY`, `AIRTABLE_BASE_ID`.
