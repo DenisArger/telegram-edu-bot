@@ -6,7 +6,9 @@
   "main": "src/bot.js",
   "scripts": {
     "start": "node src/bot.js",
-    "dev": "node src/bot.js"
+    "dev": "node src/bot.js",
+    "lint": "find . -name '*.js' -not -path './node_modules/*' -print0 | xargs -0 -n1 node --check",
+    "test": "node -e \"console.log('test: no automated tests yet')\""
   },
   "keywords": [
     "telegram",
